@@ -1,0 +1,132 @@
+import streamlit as st
+import math
+import pandas as pd
+import os
+from datetime import datetime
+
+st.set_page_config(layout="wide")
+st.title("Sistema Interno HVAC - Engenharia ⚙️")
+
+abas = st.tabs(["📐 Novo Projeto", "📊 Histórico"])
+
+# =========================
+# FUNÇÕES
+# =========================
+
+def selecionar_disjuntor(corrente):
+    corrente_projeto = corrente * 1.25
+    padrao = [6,10,16,20,25,32,40,50,63,80,100,125,160]
+    for dj in padrao:
+        if dj >= corrente_projeto:
+            return dj
+
+def selecionar_cabo(corrente):
+    tabela = {
+        10: 1.5,
+        16: 2.5,
+        25: 4,
+        32: 6,
+        40: 10,
+        63: 16,
+        80: 25,
+        100: 35,
+        125: 50
+    }
+    for limite, bitola in tabela.items():
+        if corrente <= limite:
+            return bitola
+
+def gerar_codigo_disjuntor(valor):
+    return f"DJ-3P-{str(valor).zfill(3)}A"
+
+def gerar_codigo_cabo(bitola):
+    return f"CAB-{str(bitola).zfill(3)}MM"
+
+def gerar_codigo_contator(valor):
+    return f"KM-AC3-{str(valor).zfill(3)}A"
+
+# =========================
+# ABA 1 - NOVO PROJETO
+# =========================
+
+with abas[0]:
+
+    tr = st.number_input("Capacidade (TR)", min_value=1.0)
+    aplicacao = st.selectbox("Aplicação", ["Conforto", "Hospitalar", "Industrial"])
+    tensao = st.selectbox("Tensão (V)", [220, 380, 440])
+    resistencia = st.number_input("Banco de Resistência (kW)", min_value=0.0)
+
+    if st.button("Gerar Projeto Completo"):
+
+        capacidade_kw = tr * 3.517
+        vazao = tr * 1200
+
+        potencia_vent = (vazao * 30) / (102 * 0.65)
+        potencia_vent = potencia_vent / 1000
+
+        corrente_motor = (potencia_vent * 1000) / (math.sqrt(3) * tensao * 0.9 * 0.92)
+        corrente_motor = round(corrente_motor,2)
+
+        corrente_res = 0
+        if resistencia > 0:
+            corrente_res = (resistencia * 1000) / (math.sqrt(3) * tensao)
+            corrente_res = round(corrente_res,2)
+
+        corrente_total = corrente_motor + corrente_res
+
+        dj_geral = selecionar_disjuntor(corrente_total)
+        cabo_geral = selecionar_cabo(corrente_total)
+
+        codigo_dj = gerar_codigo_disjuntor(dj_geral)
+        codigo_cabo = gerar_codigo_cabo(cabo_geral)
+        codigo_km = gerar_codigo_contator(dj_geral)
+
+        st.subheader("📦 BOM AUTOMÁTICA")
+
+        bom = pd.DataFrame([
+            [codigo_dj, f"Disjuntor Tripolar {dj_geral}A", 1],
+            [codigo_km, f"Contator AC3 {dj_geral}A", 1],
+            [codigo_cabo, f"Cabo {cabo_geral} mm²", "Conforme projeto"]
+        ], columns=["Código", "Descrição", "Quantidade"])
+
+        st.dataframe(bom)
+
+        st.subheader("🔌 Multifilar do Painel")
+
+        st.code(f"""
+L1 ─ {codigo_dj} ─ {codigo_km} ─ CARGA
+L2 ─ {codigo_dj} ─ {codigo_km} ─ CARGA
+L3 ─ {codigo_dj} ─ {codigo_km} ─ CARGA
+""")
+
+        # SALVAR HISTÓRICO
+
+        novo_projeto = pd.DataFrame([{
+            "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
+            "TR": tr,
+            "Tensão": tensao,
+            "Corrente Total (A)": round(corrente_total,2),
+            "Disjuntor Geral (A)": dj_geral
+        }])
+
+        if os.path.exists("historico_projetos.csv"):
+            historico = pd.read_csv("historico_projetos.csv")
+            historico = pd.concat([historico, novo_projeto], ignore_index=True)
+        else:
+            historico = novo_projeto
+
+        historico.to_csv("historico_projetos.csv", index=False)
+
+        st.success("Projeto salvo no histórico com sucesso ⚡")
+
+# =========================
+# ABA 2 - HISTÓRICO
+# =========================
+
+with abas[1]:
+
+    if os.path.exists("historico_projetos.csv"):
+        historico = pd.read_csv("historico_projetos.csv")
+        st.dataframe(historico)
+    else:
+        st.info("Nenhum projeto salvo ainda.")
